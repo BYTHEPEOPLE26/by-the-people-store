@@ -1,0 +1,93 @@
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:#07090d;color:#f4f6f8;font-family:Inter,Arial,sans-serif}
+.announcement{min-height:34px;background:#b91c2b;text-align:center;font-size:10px;font-weight:900;letter-spacing:1.5px;padding:10px 14px}
+.announcement span{margin:0 12px;opacity:.6}
+header{height:82px;border-bottom:1px solid #252a33;background:#080b10f2;backdrop-filter:blur(14px);display:flex;align-items:center;justify-content:space-between;padding:0 6vw;position:sticky;top:0;z-index:10}
+.brand{display:flex;align-items:center;gap:11px;color:#fff;text-decoration:none;font-family:Oswald;font-size:16px;font-weight:700}
+.brand small{display:block;font:700 9px Inter;letter-spacing:3px;color:#aeb5bf}
+.flag{width:34px;height:34px;border:1px solid #fff;display:grid;place-items:center;color:#fff;transform:skew(-8deg)}
+nav{display:flex;gap:34px}
+nav a{color:#aeb5bf;text-decoration:none;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:1px}
+nav a:hover{color:#fff}
+.cartBtn{background:#fff;color:#080b10;border:0;padding:12px 18px;font-weight:900;cursor:pointer}
+.cartBtn b{background:#b91c2b;color:#fff;padding:3px 7px;margin-left:7px}
+
+.hero{min-height:650px;padding:90px 8vw;display:flex;align-items:flex-end;position:relative;overflow:hidden;background:#05070b url("images/background.jpeg") center center/cover no-repeat}
+.heroOverlay{position:absolute;inset:0;background:linear-gradient(90deg,rgba(0,0,0,.82),rgba(0,0,0,.28) 60%,rgba(0,0,0,.52)),linear-gradient(0deg,rgba(0,0,0,.72),transparent 55%)}
+.heroContent{position:relative;z-index:1;max-width:700px;padding-bottom:20px}
+.eyebrow{font-size:10px;letter-spacing:3px;font-weight:900;color:#c1c7d0;margin-bottom:15px}
+.hero h1{font:900 clamp(54px,8vw,112px)/.9 Oswald;margin:0;letter-spacing:1px;text-shadow:0 5px 30px #000}
+.hero h1 span{color:#d2a84b}
+.hero p{max-width:560px;color:#e0e3e7;line-height:1.7;margin:24px 0 30px;font-size:15px;text-shadow:0 2px 10px #000}
+.primary{display:inline-flex;gap:35px;align-items:center;text-decoration:none;background:#d2a84b;color:#090b0e;font-weight:900;padding:16px 21px;font-size:12px;letter-spacing:1px}
+.primary:hover{background:#fff}
+
+.stats{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid #20252e;border-bottom:1px solid #20252e}
+.stats div{padding:28px 8vw;border-right:1px solid #20252e}
+.stats strong{display:block;font:700 34px Oswald;color:#d2a84b}
+.stats span{font-size:9px;letter-spacing:2px;color:#77808c;font-weight:800}
+
+.store{padding:90px 8vw}
+.sectionHead{display:flex;justify-content:space-between;align-items:end;margin-bottom:35px}
+.sectionHead h2,.split h2,.faq h2{font:700 56px/.9 Oswald;margin:0}
+.filters{display:flex;gap:7px;flex-wrap:wrap}
+.filter{border:1px solid #2a303a;background:none;color:#929ba8;padding:10px 14px;text-transform:uppercase;font-size:10px;font-weight:800;cursor:pointer;white-space:nowrap}
+.filter.active,.filter:hover{background:#d2a84b;color:#080b10;border-color:#d2a84b}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+.card{background:#0e131a;border:1px solid #202732;overflow:hidden;transition:.2s}
+.card:hover{transform:translateY(-4px);border-color:#596270}
+.cardImg{height:210px;background-size:cover;background-position:center;position:relative}
+.cardImg:after{content:"";position:absolute;inset:0;background:linear-gradient(transparent 45%,#0e131a)}
+.tag{position:absolute;top:14px;left:14px;background:#d2a84b;color:#080b10;font-size:9px;font-weight:900;padding:6px 8px;z-index:1}
+.cardBody{padding:18px}
+.cardBody h3{margin:0 0 7px;font:700 22px Oswald}
+.cardBody p{font-size:12px;color:#7f8996;line-height:1.5;min-height:36px}
+.cardBottom{display:flex;justify-content:space-between;align-items:center;margin-top:18px}
+.price{font-weight:900;font-size:18px}
+.add{border:1px solid #3b4350;background:#151b23;color:#fff;padding:10px 12px;font-size:10px;font-weight:900;cursor:pointer}
+.add:hover{background:#fff;color:#080b10}
+.storeMessage{grid-column:1/-1;text-align:center;padding:55px 25px;border:1px solid #202732;background:#0e131a;color:#8d96a3}
+.storeMessage h3{margin:0 0 8px;color:#fff;font:700 24px Oswald}
+
+.split{padding:90px 8vw;border-top:1px solid #20252e;background:#0c1016;display:grid;grid-template-columns:1fr 1fr;gap:80px}
+.split p{color:#8d96a3;line-height:1.9;max-width:600px}
+.faq{padding:90px 8vw;max-width:1100px}
+.faq details{border-top:1px solid #242a34;padding:22px 0}
+.faq summary{font-weight:800;cursor:pointer}
+.faq p{color:#89929e;line-height:1.7;max-width:700px}
+
+footer{border-top:1px solid #20252e;padding:30px 8vw;display:flex;justify-content:space-between;align-items:center;color:#66707d;font-size:10px;text-transform:uppercase;letter-spacing:1px}
+.drawer{position:fixed;right:-430px;top:0;width:430px;max-width:100%;height:100vh;background:#0c1118;z-index:30;padding:28px;transition:.3s;box-shadow:-20px 0 60px #0008}
+.drawer.open{right:0}
+.overlay{position:fixed;inset:0;background:#0009;z-index:20;display:none}
+.overlay.show{display:block}
+.drawerTop{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #252c36;padding-bottom:20px}
+.drawerTop h3{font:700 28px Oswald;margin:0}
+.drawerTop button{background:none;border:0;color:#fff;font-size:30px;cursor:pointer}
+.cartItem{display:flex;justify-content:space-between;gap:15px;padding:18px 0;border-bottom:1px solid #202630}
+.cartItem span{font-weight:700}
+.remove{background:none;border:0;color:#b91c2b;cursor:pointer;font-size:11px}
+.total{display:flex;justify-content:space-between;padding:25px 0;font-size:13px}
+.total strong{font-size:22px}
+.checkout{width:100%;padding:17px;background:#d2a84b;border:0;font-weight:900;cursor:pointer}
+.secure{text-align:center;color:#687280;font-size:10px}
+
+@media(max-width:800px){
+nav{display:none}
+header{padding:0 5vw;height:72px}
+.hero{min-height:590px;padding:60px 7vw;background-position:center}
+.heroContent{padding-bottom:5px}
+.hero h1{font-size:58px}
+.hero p{font-size:13px}
+.stats{grid-template-columns:1fr}
+.stats div{border-right:0;border-bottom:1px solid #20252e}
+.store,.split,.faq{padding:65px 7vw}
+.sectionHead{display:block}
+.filters{margin-top:25px;display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+.filter{width:100%;padding:12px 8px}
+.grid{grid-template-columns:1fr}
+.split{grid-template-columns:1fr;gap:30px}
+.sectionHead h2,.split h2,.faq h2{font-size:44px}
+footer{flex-direction:column;gap:18px;align-items:flex-start}
+}
