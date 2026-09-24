@@ -2,7 +2,7 @@ const productsEl=document.querySelector("#products"),filtersEl=document.querySel
 let products=[], cart=JSON.parse(localStorage.getItem("btp-cart")||"[]"), current="All";
 const money=n=>new Intl.NumberFormat("en-GB",{style:"currency",currency:"GBP"}).format(n);
 async function load(){products=await (await fetch("/api/products")).json();renderFilters();render();}
-function renderFilters(){["All","Businesses","Vehicles","MLOs"].forEach(x=>{const b=document.createElement("button");b.className="filter "+(current===x?"active":"");b.textContent=x;b.onclick=()=>{current=x;renderFilters();render()};filtersEl.appendChild(b)})}
+function renderFilters(){filtersEl.innerHTML="";["All","Businesses","Vehicles","MLOs"].forEach(x=>{
 function render(){productsEl.innerHTML="";products.filter(p=>current==="All"||p.type===current).forEach(p=>{const d=document.createElement("article");d.className="card";d.innerHTML=`<div class="cardImg" style="background-image:url('${p.image}')"><span class="tag">${p.type}</span></div><div class="cardBody"><h3>${p.name}</h3><p>${p.description}</p><div class="cardBottom"><span class="price">${money(p.price)}</span><button class="add">ADD TO CART</button></div></div>`;d.querySelector(".add").onclick=()=>add(p.id);productsEl.appendChild(d)})}
 function add(id){if(!cart.includes(id))cart.push(id);save();openCart()}
 function remove(id){cart=cart.filter(x=>x!==id);save()}
