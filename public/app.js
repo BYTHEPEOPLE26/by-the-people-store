@@ -24,7 +24,7 @@ const categories = ['All', 'Businesses', 'Vehicles', 'MLOs'];
 const money = n => new Intl.NumberFormat('en-GB', { style:'currency', currency:'GBP' }).format(Number(n) || 0);
 const priceLabel = p => p.billing === 'monthly' ? `${money(p.price)}/month` : money(p.price);
 const safe = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const imageUrl = file => `/images/products/${encodeURIComponent(file)}`;
+const imageUrl = file => `/images/public/images/products/${encodeURIComponent(file)}`;
 
 async function load(){
   try {
