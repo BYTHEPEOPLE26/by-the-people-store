@@ -1,8 +1,7 @@
 {
-  "name": "by-the-people-roleplay-store",
-  "version": "1.0.0",
-  "private": true,
-  "type": "module",
-  "scripts": {"start": "node server.js", "dev": "node --watch server.js"},
-  "dependencies": {"express": "^5.1.0", "stripe": "^18.5.0"}
+  "name":"by-the-people-store",
+  "version":"1.1.0",
+  "type":"module",
+  "scripts":{"start":"node server.js"},
+  "dependencies":{"express":"^5.1.0","stripe":"^18.5.0","mysql2":"^3.14.3"}
 }

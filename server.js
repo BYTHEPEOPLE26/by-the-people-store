@@ -3,6 +3,7 @@ import Stripe from 'stripe';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
+import mysql from 'mysql2/promise';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -12,6 +13,9 @@ const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SEC
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
 const EMAIL_FROM = process.env.EMAIL_FROM || '';
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
+const BTP_API_SECRET = process.env.BTP_API_SECRET || '';
+const SESSION_SECRET = process.env.SESSION_SECRET || BTP_API_SECRET;
+const pool = process.env.DATABASE_URL ? mysql.createPool(process.env.DATABASE_URL) : null;
 
 const products = [
   {id:'veh-01',type:'Vehicles',name:'Gresley Hellfire PD',price:25,billing:'once',stock:999,images:['GRESLEYHELLFIREPD.webp'],description:'Gresley Hellfire PD vehicle for your By The People RolePlay fleet.'},
@@ -121,6 +125,53 @@ function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+
+function hmac(value) {
+  return crypto.createHmac('sha256', SESSION_SECRET).update(String(value)).digest('hex');
+}
+function signCookie(accountId) {
+  return `${accountId}.${hmac(accountId)}`;
+}
+function verifyCookie(value) {
+  const [id, sig] = String(value || '').split('.');
+  if (!id || !sig) return null;
+  const expected = hmac(id);
+  if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
+  return Number(id) || null;
+}
+function getCookie(req, name) {
+  const cookies = String(req.headers.cookie || '').split(';');
+  for (const item of cookies) {
+    const [k, ...v] = item.trim().split('=');
+    if (k === name) return decodeURIComponent(v.join('='));
+  }
+  return null;
+}
+function requireApiSecret(req, res) {
+  const auth = String(req.headers.authorization || '');
+  if (!BTP_API_SECRET || auth !== `Bearer ${BTP_API_SECRET}`) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return false;
+  }
+  return true;
+}
+async function ensureDb() {
+  if (!pool) throw new Error('DATABASE_URL is not configured.');
+  await pool.execute(`CREATE TABLE IF NOT EXISTS btp_store_link_tokens (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    token_hash CHAR(64) NOT NULL,
+    cfx_id VARCHAR(100) NULL,
+    license_id VARCHAR(100) NULL,
+    citizenid VARCHAR(100) NULL,
+    expires_at DATETIME NOT NULL,
+    used_at DATETIME NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id), UNIQUE KEY uq_btp_link_token_hash (token_hash),
+    KEY idx_btp_link_citizenid (citizenid), KEY idx_btp_link_expires (expires_at)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+}
+function makeToken() { return crypto.randomBytes(32).toString('hex'); }
+
 app.post('/api/stripe-webhook', express.raw({type:'application/json'}), async (req,res) => {
   if (!stripe || !STRIPE_WEBHOOK_SECRET) return res.status(500).send('Stripe webhook is not configured.');
   let event;
@@ -140,17 +191,141 @@ app.post('/api/stripe-webhook', express.raw({type:'application/json'}), async (r
       const total = Number(session.amount_total || 0) / 100;
       const email = session.customer_details?.email || session.customer_email || '';
       const name = session.customer_details?.name || 'there';
-      await sendConfirmationEmail({
-        to:email,name,purchaseId,products:selected,total,
-        billing:session.metadata?.billing === 'monthly' ? 'monthly' : 'once'
-      });
+      if (!pool) throw new Error('DATABASE_URL is not configured.');
+      const billing = session.metadata?.billing === 'monthly' ? 'monthly' : 'once';
+      const [accounts] = await pool.execute('SELECT id FROM btp_store_accounts WHERE email=? LIMIT 1',[email.toLowerCase()]);
+      const accountId = accounts[0]?.id || null;
+      await pool.execute(`INSERT INTO btp_store_purchases (purchase_id,account_id,stripe_session_id,stripe_customer_id,stripe_subscription_id,product_ids,billing,total,payment_status) VALUES (?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE payment_status=VALUES(payment_status),account_id=VALUES(account_id),stripe_subscription_id=VALUES(stripe_subscription_id),updated_at=CURRENT_TIMESTAMP`,
+        [purchaseId,accountId,session.id,session.customer || null,session.subscription || null,ids.join(','),billing,total,'paid']);
+      if (accountId) {
+        for (const p of selected) {
+          const expiresAt = p.billing === 'monthly' ? new Date(Date.now() + 32*24*60*60*1000) : null;
+          await pool.execute('INSERT INTO btp_store_entitlements (account_id,purchase_id,product_id,product_type,status,expires_at) VALUES (?,?,?,?,?,?)',
+            [accountId,purchaseId,p.id,p.type,'active',expiresAt ? expiresAt.toISOString().slice(0,19).replace('T',' ') : null]);
+        }
+      }
+      await sendConfirmationEmail({to:email,name,purchaseId,products:selected,total,billing});
       console.log(`Purchase confirmed: ${purchaseId} (${session.id})`);
+    }
+
+    if (event.type === 'customer.subscription.deleted' || event.type === 'customer.subscription.updated') {
+      const subscription = event.data.object;
+      if (pool && subscription.id) {
+        const status = subscription.status === 'active' || subscription.status === 'trialing' ? 'active' : 'expired';
+        const expiresAt = subscription.current_period_end ? new Date(subscription.current_period_end * 1000).toISOString().slice(0,19).replace('T',' ') : null;
+        await pool.execute('UPDATE btp_store_purchases SET payment_status=?,updated_at=CURRENT_TIMESTAMP WHERE stripe_subscription_id=?',[status,subscription.id]);
+        await pool.execute('UPDATE btp_store_entitlements e JOIN btp_store_purchases p ON p.purchase_id=e.purchase_id SET e.status=?,e.expires_at=?,e.updated_at=CURRENT_TIMESTAMP WHERE p.stripe_subscription_id=?',[status,expiresAt,subscription.id]);
+      }
     }
     return res.json({received:true});
   } catch (error) {
     console.error('Stripe webhook processing error:', error);
     return res.status(500).json({error:'Webhook processing failed.'});
   }
+});
+
+
+app.post('/api/fivem/link', express.json(), async (req,res) => {
+  if (!requireApiSecret(req,res)) return;
+  try {
+    await ensureDb();
+    const token = makeToken();
+    const hash = crypto.createHash('sha256').update(token).digest('hex');
+    const expires = new Date(Date.now() + 10 * 60 * 1000);
+    const sqlDate = expires.toISOString().slice(0,19).replace('T',' ');
+    await pool.execute(
+      'INSERT INTO btp_store_link_tokens (token_hash,cfx_id,license_id,citizenid,expires_at) VALUES (?,?,?,?,?)',
+      [hash, req.body?.cfx_id || null, req.body?.license_id || null, req.body?.citizenid || null, sqlDate]
+    );
+    res.json({ url: `${BASE_URL}/link.html?token=${encodeURIComponent(token)}` });
+  } catch (error) {
+    console.error('FiveM link creation error:', error);
+    res.status(500).json({ error: 'Could not create link.' });
+  }
+});
+
+app.get('/api/fivem/link/verify', async (req,res) => {
+  try {
+    if (!pool) return res.status(500).json({error:'Database is not configured.'});
+    const token = String(req.query.token || '');
+    if (!/^[a-f0-9]{64}$/.test(token)) return res.status(400).json({error:'Invalid token.'});
+    const hash = crypto.createHash('sha256').update(token).digest('hex');
+    const [rows] = await pool.execute(
+      'SELECT id,cfx_id,license_id,citizenid,expires_at,used_at FROM btp_store_link_tokens WHERE token_hash=? LIMIT 1', [hash]
+    );
+    const row = rows[0];
+    if (!row || row.used_at || new Date(row.expires_at).getTime() < Date.now()) return res.status(410).json({error:'This link has expired or has already been used.'});
+    res.json({valid:true,citizenid:row.citizenid || null});
+  } catch (error) { console.error(error); res.status(500).json({error:'Could not verify token.'}); }
+});
+
+app.post('/api/fivem/link/consume', express.json(), async (req,res) => {
+  try {
+    if (!pool) return res.status(500).json({error:'Database is not configured.'});
+    const token = String(req.body?.token || '');
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    if (!/^[a-f0-9]{64}$/.test(token) || !email || !email.includes('@')) return res.status(400).json({error:'Valid token and email are required.'});
+    const hash = crypto.createHash('sha256').update(token).digest('hex');
+    const [rows] = await pool.execute('SELECT * FROM btp_store_link_tokens WHERE token_hash=? LIMIT 1',[hash]);
+    const row = rows[0];
+    if (!row || row.used_at || new Date(row.expires_at).getTime() < Date.now()) return res.status(410).json({error:'This link has expired or has already been used.'});
+
+    const [existing] = await pool.execute('SELECT id FROM btp_store_accounts WHERE email=? LIMIT 1',[email]);
+    let accountId;
+    if (existing[0]) {
+      accountId = existing[0].id;
+      await pool.execute('UPDATE btp_store_accounts SET cfx_id=?,fivem_id=?,citizenid=?,updated_at=CURRENT_TIMESTAMP WHERE id=?',
+        [row.cfx_id,row.license_id,row.citizenid,accountId]);
+    } else {
+      const [inserted] = await pool.execute('INSERT INTO btp_store_accounts (email,cfx_id,fivem_id,citizenid) VALUES (?,?,?,?)',
+        [email,row.cfx_id,row.license_id,row.citizenid]);
+      accountId = inserted.insertId;
+    }
+    await pool.execute('UPDATE btp_store_link_tokens SET used_at=CURRENT_TIMESTAMP WHERE id=?',[row.id]);
+    res.setHeader('Set-Cookie', `btp_account=${encodeURIComponent(signCookie(accountId))}; Path=/; Max-Age=31536000; HttpOnly; Secure; SameSite=Lax`);
+    res.json({success:true,accountId,citizenid:row.citizenid});
+  } catch (error) { console.error('FiveM link consume error:', error); res.status(500).json({error:'Could not link account.'}); }
+});
+
+app.get('/api/account', async (req,res) => {
+  try {
+    if (!pool) return res.status(500).json({error:'Database is not configured.'});
+    const id = verifyCookie(getCookie(req,'btp_account'));
+    if (!id) return res.status(401).json({linked:false});
+    const [rows] = await pool.execute('SELECT id,email,cfx_id,fivem_id,citizenid FROM btp_store_accounts WHERE id=? LIMIT 1',[id]);
+    if (!rows[0]) return res.status(401).json({linked:false});
+    res.json({linked:true,account:rows[0]});
+  } catch (error) { res.status(500).json({error:'Could not load account.'}); }
+});
+
+app.post('/api/fivem/pending', express.json(), async (req,res) => {
+  if (!requireApiSecret(req,res)) return;
+  try {
+    if (!pool) return res.status(500).json({error:'Database is not configured.'});
+    const citizenid = String(req.body?.citizenid || '');
+    const [rows] = await pool.execute(`
+      SELECT e.id,e.purchase_id,e.product_id,e.product_type,e.status,e.expires_at,p.product_ids
+      FROM btp_store_entitlements e JOIN btp_store_purchases p ON p.purchase_id=e.purchase_id
+      JOIN btp_store_accounts a ON a.id=e.account_id
+      WHERE a.citizenid=? AND e.status='active' AND (e.expires_at IS NULL OR e.expires_at > NOW())
+      ORDER BY e.id ASC`, [citizenid]);
+    const enriched = rows.map(row => ({...row, product_name: products.find(p=>p.id===row.product_id)?.name || row.product_id}));
+    res.json({entitlements: enriched});
+  } catch (error) { console.error('Pending delivery error:',error); res.status(500).json({error:'Could not load pending deliveries.'}); }
+});
+
+app.post('/api/fivem/claim', express.json(), async (req,res) => {
+  if (!requireApiSecret(req,res)) return;
+  try {
+    if (!pool) return res.status(500).json({error:'Database is not configured.'});
+    const entitlementId = Number(req.body?.entitlement_id);
+    const vehicleId = Number(req.body?.vehicle_id);
+    const citizenid = String(req.body?.citizenid || '');
+    const [rows] = await pool.execute(`SELECT e.id FROM btp_store_entitlements e JOIN btp_store_accounts a ON a.id=e.account_id WHERE e.id=? AND a.citizenid=? AND e.status='active' LIMIT 1`,[entitlementId,citizenid]);
+    if (!rows[0]) return res.status(404).json({error:'Entitlement not found.'});
+    await pool.execute('UPDATE btp_store_entitlements SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?', ['claimed',entitlementId]);
+    res.json({success:true,vehicleId});
+  } catch (error) { console.error('Claim error:',error); res.status(500).json({error:'Could not claim entitlement.'}); }
 });
 
 app.use(express.static(path.join(__dirname,'public')));
@@ -205,8 +380,9 @@ app.post('/api/create-checkout-session', express.json(), async (req,res)=>{
         quantity:1
       })),
       success_url:`${BASE_URL}/success.html?session_id={CHECKOUT_SESSION_ID}`,
+      ...(verifyCookie(getCookie(req,'btp_account')) ? { customer_email: (await pool.execute('SELECT email FROM btp_store_accounts WHERE id=? LIMIT 1',[verifyCookie(getCookie(req,'btp_account'))]))[0][0]?.email || undefined } : {}),
       cancel_url:`${BASE_URL}/#store`,
-      metadata:{product_ids:selected.map(p=>p.id).join(','),billing:monthly?'monthly':'once',purchase_id:makePurchaseId()}
+      metadata:{product_ids:selected.map(p=>p.id).join(','),billing:monthly?'monthly':'once',purchase_id:makePurchaseId(),account_id:String(verifyCookie(getCookie(req,'btp_account')) || '')}
     });
     res.json({url:session.url});
   } catch(error){
