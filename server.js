@@ -134,8 +134,7 @@ app.post('/api/fivem/link',async(req,res)=>{
   const {citizenid,cfx_id,license_id}=req.body||{};
   if(!citizenid) return res.status(400).json({error:'citizenid required'});
   try{
-    const token=crypto.randomBytes(32).toString('hex');
-    const expires=new Date(Date.now()+10*60*1000);
+const token=crypto.randomBytes(32).toString('hex'); const expires=new Date('9999-12-31T23:59:59Z');
     await db().execute('INSERT INTO btp_store_link_tokens (token_hash,fivem_id,license_id,citizenid,expires_at) VALUES (?,?,?,?,?)',[hashToken(token),cfx_id||null,license_id||null,citizenid,expires]);
     res.json({url:`${BASE_URL}/link.html?token=${encodeURIComponent(token)}`});
   }catch(e){console.error('Link creation error:',e);res.status(500).json({error:'Could not create link.'});}
@@ -145,7 +144,7 @@ app.post('/api/fivem/consume-link',async(req,res)=>{
   const token=String(req.body?.token||'');
   if(!token) return res.status(400).json({error:'Token required'});
   try{
-    const [rows]=await db().query('SELECT * FROM btp_store_link_tokens WHERE token_hash=? AND used_at IS NULL AND expires_at>NOW() LIMIT 1',[hashToken(token)]);
+    const [rows]=await db().query('SELECT * FROM btp_store_link_tokens WHERE token_hash=? AND used_at IS NULL LIMIT 1',[hashToken(token)]);
     const row=rows[0];
     if(!row) return res.status(410).json({error:'This link has expired or has already been used.'});
     const [existing]=await db().query('SELECT * FROM btp_store_accounts WHERE citizenid=? OR cfx_id=? OR fivem_id=? LIMIT 1',[row.citizenid,row.fivem_id,row.fivem_id]);
