@@ -45,7 +45,6 @@
     <div><div class="redLine"></div><div class="eyebrow">PREMIUM SERVER CONTENT</div><h2>FEATURED <span>PRODUCTS</span></h2></div>
     <a href="#top" class="viewAll">BACK TO TOP <b>↑</b></a>
   </div>
-  <div class="filters" id="filters"></div>
   <div class="grid" id="products"></div>
 </section>
 
@@ -77,11 +76,7 @@ document.querySelectorAll(".categoryCard").forEach(card => {
   card.addEventListener("click", () => {
     const wanted = card.dataset.category;
     document.querySelector("#store").scrollIntoView({behavior:"smooth"});
-    setTimeout(() => {
-      const match = [...document.querySelectorAll("#filters .filter")]
-        .find(btn => btn.textContent.trim().toLowerCase() === wanted.toLowerCase());
-      if (match) match.click();
-    }, 350);
+    window.setStoreCategory?.(wanted);
   });
 });
 </script>
