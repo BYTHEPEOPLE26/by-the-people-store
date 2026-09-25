@@ -17,7 +17,7 @@ const products = [
   {id:'veh-01',type:'Vehicles',name:'Gresley Hellfire PD',price:25,billing:'once',stock:999,images:['GRESLEYHELLFIREPD.webp'],description:'Gresley Hellfire PD vehicle for your By The People RolePlay fleet.'},
   {id:'veh-02',type:'Vehicles',name:'Gresley Hellfire',price:20,billing:'once',stock:999,images:['GRESLEYHELLFIRE.webp'],description:'Gresley Hellfire vehicle for your roleplay fleet.'},
   {id:'veh-03',type:'Vehicles',name:'Schlagen STR',price:20,billing:'once',stock:999,images:['SCHLAGENSTR.webp'],description:'Schlagen STR performance vehicle.'},
-  {id:'veh-04',type:'Vehicles',name:'MVolt',price:0,billing:'once',stock:999,images:['MVOLT.webp'],description:'MVolt vehicle package.'},
+  {id:'veh-04',type:'Vehicles',name:'MVolt',price:15,billing:'once',stock:999,images:['MVOLT.webp'],description:'MVolt vehicle package.'},
   {id:'veh-05',type:'Vehicles',name:'Castigator UM',price:20,billing:'once',stock:999,images:['CASTIGATORUM.webp'],description:'Castigator UM vehicle.'},
   {id:'veh-06',type:'Vehicles',name:'FX3R',price:15,billing:'once',stock:999,images:['FX3R.webp'],description:'FX3R performance vehicle.'},
   {id:'veh-07',type:'Vehicles',name:'H4RXST2',price:15,billing:'once',stock:999,images:['H4RXST2.webp'],description:'H4RXST2 custom vehicle.'},
