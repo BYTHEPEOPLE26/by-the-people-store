@@ -28,7 +28,10 @@ app.post("/api/create-checkout-session", express.json(), async (req,res) => {
   if (!selected.length) return res.status(400).json({error:"No valid products selected."});
 
   const session = await stripe.checkout.sessions.create({
-    mode: "payment",
+  mode: "payment",
+  managed_payments: {
+    enabled: false
+  },
     line_items: selected.map(p => ({
       price_data: {
         currency: "gbp",
