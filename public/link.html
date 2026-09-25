@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Link FiveM | By The People</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body class="linkPage">
+<div class="linkShell">
+  <div class="brand brandLarge"><span class="flag">★</span><span>BY THE PEOPLE<small>ROLEPLAY</small></span></div>
+  <div class="linkIcon">✓</div>
+  <div class="eyebrow">SECURE FIVE M LINK</div>
+  <h1 id="title">CONNECTING YOUR ACCOUNT</h1>
+  <p id="message">Please wait while we securely link your FiveM character to the By The People store.</p>
+  <div class="progress"><span></span></div>
+  <a id="continue" class="primary hidden" href="/">OPEN STORE →</a>
+</div>
+<script>
+const token=new URLSearchParams(location.search).get('token');
+const title=document.getElementById('title');
+const message=document.getElementById('message');
+const progress=document.querySelector('.progress');
+const button=document.getElementById('continue');
+
+async function link(){
+  if(!token){
+    progress.classList.add('hidden');
+    title.textContent='LINK NOT FOUND';
+    message.textContent='This FiveM link is missing its security token. Open /store in FiveM again to create a new link.';
+    button.classList.remove('hidden');
+    return;
+  }
+  try{
+    const response=await fetch('/api/fivem/consume-link',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({token})
+    });
+    const data=await response.json();
+    if(!response.ok) throw new Error(data.error||'Could not link your account.');
+    progress.classList.add('complete');
+    title.textContent='ACCOUNT LINKED';
+    message.textContent='Your FiveM account is now securely linked. Your purchases will be connected to this account.';
+    button.classList.remove('hidden');
+    setTimeout(()=>location.replace('/?linked=1'),900);
+  }catch(error){
+    progress.classList.add('hidden');
+    title.textContent='LINK FAILED';
+    message.textContent=error.message;
+    button.classList.remove('hidden');
+  }
+}
+link();
+</script>
+</body>
+</html>
