@@ -1,14 +1,14 @@
 import express from 'express';
 import Stripe from 'stripe';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath } from 'url';
 import crypto from 'node:crypto';
 import mysql from 'mysql2/promise';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
+const BASE_URL = (process.env.BASE_URL || `http://localhost:${PORT}`).replace(/\/+$/, '');
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '';
 const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY) : null;
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
@@ -46,8 +46,8 @@ const products = [
 
 let pool;
 function db(){
-  if (!DATABASE_URL) throw new Error('DATABASE_URL is not configured.');
-  if (!pool) pool = mysql.createPool(DATABASE_URL + (DATABASE_URL.includes('?') ? '&' : '?') + 'connectionLimit=5');
+  if(!DATABASE_URL) throw new Error('DATABASE_URL is not configured.');
+  if(!pool) pool = mysql.createPool(DATABASE_URL + (DATABASE_URL.includes('?') ? '&' : '?') + 'connectionLimit=5');
   return pool;
 }
 function makePurchaseId(){ return `BTP-${new Date().getFullYear()}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`; }
@@ -58,12 +58,13 @@ function signAccount(id){ const body=String(id); const sig=crypto.createHmac('sh
 function verifyAccount(value){
   if(!value || !value.includes('.')) return null;
   const [id,sig]=value.split('.');
-  if(!/^\d+$/.test(id)) return null;
+  if(!/^\d+$/.test(id) || !/^[a-f0-9]{64}$/i.test(sig)) return null;
   const expected=crypto.createHmac('sha256',COOKIE_SECRET).update(id).digest('hex');
   if(!crypto.timingSafeEqual(Buffer.from(sig),Buffer.from(expected))) return null;
   return Number(id);
 }
-function apiAuthorized(req){ return BTP_API_SECRET && req.headers.authorization === `Bearer ${BTP_API_SECRET}`; }
+function apiAuthorized(req){ return !!BTP_API_SECRET && req.headers.authorization === `Bearer ${BTP_API_SECRET}`; }
+
 async function getAccountFromCookie(req){
   const raw=(req.headers.cookie||'').split(';').map(x=>x.trim()).find(x=>x.startsWith('btp_account='));
   const value=raw?.slice('btp_account='.length);
@@ -72,6 +73,7 @@ async function getAccountFromCookie(req){
   const [rows]=await db().query('SELECT * FROM btp_store_accounts WHERE id=? LIMIT 1',[id]);
   return rows[0] || null;
 }
+
 async function sendConfirmationEmail({to,name,purchaseId,products,total,billing}){
   if(!RESEND_API_KEY || !EMAIL_FROM || !to) return;
   const lines=products.map(p=>`<tr><td style="padding:10px 0;border-bottom:1px solid #263246">${escapeHtml(p.name)}</td><td style="padding:10px 0;border-bottom:1px solid #263246;text-align:right">${money(p.price)}${p.billing==='monthly'?'/month':''}</td></tr>`).join('');
@@ -90,9 +92,7 @@ app.post('/api/stripe-webhook', express.raw({type:'application/json'}), async (r
       const email=s.customer_details?.email||s.customer_email||''; const name=s.customer_details?.name||'there';
       await db().execute(`INSERT INTO btp_store_purchases (purchase_id,account_id,stripe_session_id,stripe_customer_id,stripe_subscription_id,product_ids,billing,total,payment_status) VALUES (?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE payment_status=VALUES(payment_status),stripe_customer_id=VALUES(stripe_customer_id),stripe_subscription_id=VALUES(stripe_subscription_id),account_id=COALESCE(account_id,VALUES(account_id))`,[purchaseId,accountId,s.id,s.customer||null,s.subscription||null,ids.join(','),billing,total,s.payment_status||'paid']);
       if(accountId){
-        for(const p of selected){
-          await db().execute(`INSERT INTO btp_store_entitlements (account_id,purchase_id,product_id,product_type,status,expires_at) VALUES (?,?,?,?,?,?)`,[accountId,purchaseId,p.id,p.type,'active',null]);
-        }
+        for(const p of selected) await db().execute(`INSERT INTO btp_store_entitlements (account_id,purchase_id,product_id,product_type,status,expires_at) VALUES (?,?,?,?,?,?)`,[accountId,purchaseId,p.id,p.type,'active',null]);
       }
       await sendConfirmationEmail({to:email,name,purchaseId,products:selected,total,billing});
       console.log(`Purchase recorded: ${purchaseId} (${s.id})`);
@@ -107,13 +107,13 @@ app.post('/api/stripe-webhook', express.raw({type:'application/json'}), async (r
 });
 
 app.use((req,res,next)=>{
-  res.cookie = (name,value,options={}) => {
+  res.cookie=(name,value,options={})=>{
     const parts=[`${name}=${encodeURIComponent(value)}`];
     if(options.maxAge) parts.push(`Max-Age=${Math.floor(options.maxAge/1000)}`);
     if(options.httpOnly) parts.push('HttpOnly');
     if(options.secure) parts.push('Secure');
     if(options.sameSite) parts.push(`SameSite=${options.sameSite}`);
-    res.append('Set-Cookie', parts.join('; '));
+    res.append('Set-Cookie',parts.join('; '));
   };
   next();
 });
@@ -121,24 +121,41 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname,'public')));
 app.get('/api/products',(_,res)=>res.json(products));
 
+app.get('/api/account',async(req,res)=>{
+  try{
+    const account=await getAccountFromCookie(req);
+    if(!account) return res.json({linked:false});
+    res.json({linked:true,citizenid:account.citizenid});
+  }catch(e){console.error('Account lookup error:',e);res.status(500).json({linked:false});}
+});
+
 app.post('/api/fivem/link',async(req,res)=>{
   if(!apiAuthorized(req)) return res.status(401).json({error:'Unauthorized'});
-  const {citizenid,cfx_id,license_id,discord_id}=req.body||{}; if(!citizenid) return res.status(400).json({error:'citizenid required'});
+  const {citizenid,cfx_id,license_id}=req.body||{};
+  if(!citizenid) return res.status(400).json({error:'citizenid required'});
   try{
-    const token=crypto.randomBytes(32).toString('hex'); const expires=new Date(Date.now()+10*60*1000);
+    const token=crypto.randomBytes(32).toString('hex');
+    const expires=new Date(Date.now()+10*60*1000);
     await db().execute('INSERT INTO btp_store_link_tokens (token_hash,fivem_id,license_id,citizenid,expires_at) VALUES (?,?,?,?,?)',[hashToken(token),cfx_id||null,license_id||null,citizenid,expires]);
     res.json({url:`${BASE_URL}/link.html?token=${encodeURIComponent(token)}`});
   }catch(e){console.error('Link creation error:',e);res.status(500).json({error:'Could not create link.'});}
 });
 
 app.post('/api/fivem/consume-link',async(req,res)=>{
-  const token=String(req.body?.token||''); if(!token) return res.status(400).json({error:'Token required'});
+  const token=String(req.body?.token||'');
+  if(!token) return res.status(400).json({error:'Token required'});
   try{
-    const [rows]=await db().query('SELECT * FROM btp_store_link_tokens WHERE token_hash=? AND used_at IS NULL AND expires_at>NOW() LIMIT 1',[hashToken(token)]); const row=rows[0]; if(!row) return res.status(410).json({error:'This link has expired or has already been used.'});
+    const [rows]=await db().query('SELECT * FROM btp_store_link_tokens WHERE token_hash=? AND used_at IS NULL AND expires_at>NOW() LIMIT 1',[hashToken(token)]);
+    const row=rows[0];
+    if(!row) return res.status(410).json({error:'This link has expired or has already been used.'});
     const [existing]=await db().query('SELECT * FROM btp_store_accounts WHERE citizenid=? OR cfx_id=? OR fivem_id=? LIMIT 1',[row.citizenid,row.fivem_id,row.fivem_id]);
     let account=existing[0];
-    if(account){ await db().execute('UPDATE btp_store_accounts SET citizenid=?,cfx_id=?,fivem_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?',[row.citizenid,row.fivem_id,row.fivem_id,account.id]); }
-    else { const [r]=await db().execute('INSERT INTO btp_store_accounts (cfx_id,fivem_id,citizenid) VALUES (?,?,?)',[row.fivem_id,row.fivem_id,row.citizenid]); account={id:r.insertId}; }
+    if(account){
+      await db().execute('UPDATE btp_store_accounts SET citizenid=?,cfx_id=?,fivem_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?',[row.citizenid,row.fivem_id,row.fivem_id,account.id]);
+    }else{
+      const [r]=await db().execute('INSERT INTO btp_store_accounts (cfx_id,fivem_id,citizenid) VALUES (?,?,?)',[row.fivem_id,row.fivem_id,row.citizenid]);
+      account={id:r.insertId};
+    }
     await db().execute('UPDATE btp_store_link_tokens SET used_at=NOW() WHERE id=?',[row.id]);
     res.cookie('btp_account',signAccount(account.id),{httpOnly:true,secure:true,sameSite:'lax',maxAge:31536000000});
     res.json({ok:true});
@@ -148,32 +165,79 @@ app.post('/api/fivem/consume-link',async(req,res)=>{
 app.post('/api/create-checkout-session',async(req,res)=>{
   try{
     if(!stripe) return res.status(500).json({error:'Stripe is not configured.'});
-    const account=await getAccountFromCookie(req); if(!account) return res.status(401).json({error:'Please link your FiveM account first.'});
-    const ids=Array.isArray(req.body?.productIds)?req.body.productIds:[]; const selected=ids.map(id=>products.find(p=>p.id===id)).filter(Boolean); if(!selected.length) return res.status(400).json({error:'No valid products selected.'});
+    const account=await getAccountFromCookie(req);
+    if(!account) return res.status(401).json({error:'Please link your FiveM account first.'});
+    const ids=Array.isArray(req.body?.productIds)?req.body.productIds:[];
+    const selected=ids.map(id=>products.find(p=>p.id===id)).filter(Boolean);
+    if(!selected.length) return res.status(400).json({error:'No valid products selected.'});
     if(selected.some(p=>p.stock<=0)) return res.status(409).json({error:'One or more selected products are sold out.'});
-    const billingTypes=new Set(selected.map(p=>p.billing)); if(billingTypes.size>1) return res.status(400).json({error:'Please checkout vehicles separately from monthly subscriptions.'});
+    const billingTypes=new Set(selected.map(p=>p.billing));
+    if(billingTypes.size>1) return res.status(400).json({error:'Please checkout vehicles separately from monthly subscriptions.'});
     const monthly=selected[0].billing==='monthly';
-    if(monthly){ const [rows]=await db().query(`SELECT e.product_id FROM btp_store_entitlements e WHERE e.account_id=? AND e.status='active' AND e.product_id IN (${selected.map(()=>'?').join(',')})`,[account.id,...selected.map(p=>p.id)]); if(rows.length) return res.status(409).json({error:'One or more selected subscriptions are already active on this account.'}); }
-    const purchaseId=makePurchaseId(); const session=await stripe.checkout.sessions.create({mode:monthly?'subscription':'payment',managed_payments:{enabled:false},line_items:selected.map(p=>({price_data:{currency:'gbp',product_data:{name:p.name,description:p.description},unit_amount:Math.round(p.price*100),...(monthly?{recurring:{interval:'month'}}:{})},quantity:1})),success_url:`${BASE_URL}/success.html?session_id={CHECKOUT_SESSION_ID}`,cancel_url:`${BASE_URL}/#store`,metadata:{product_ids:selected.map(p=>p.id).join(','),billing:monthly?'monthly':'once',purchase_id,account_id:String(account.id)}});
+    if(monthly){
+      const [rows]=await db().query(`SELECT e.product_id FROM btp_store_entitlements e WHERE e.account_id=? AND e.status='active' AND e.product_id IN (${selected.map(()=>'?').join(',')})`,[account.id,...selected.map(p=>p.id)]);
+      if(rows.length) return res.status(409).json({error:'One or more selected subscriptions are already active on this account.'});
+    }
+    const purchaseId=makePurchaseId();
+    const session=await stripe.checkout.sessions.create({
+      mode:monthly?'subscription':'payment',
+      managed_payments:{enabled:false},
+      line_items:selected.map(p=>({price_data:{currency:'gbp',product_data:{name:p.name,description:p.description},unit_amount:Math.round(p.price*100),...(monthly?{recurring:{interval:'month'}}:{})},quantity:1})),
+      success_url:`${BASE_URL}/success.html?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url:`${BASE_URL}/#store`,
+      metadata:{product_ids:selected.map(p=>p.id).join(','),billing:monthly?'monthly':'once',purchase_id,account_id:String(account.id)}
+    });
     res.json({url:session.url});
   }catch(e){console.error('Checkout error:',e);res.status(500).json({error:e?.message||'Checkout failed.'});}
 });
 
 app.post('/api/fivem/pending',async(req,res)=>{
-  if(!apiAuthorized(req)) return res.status(401).json({error:'Unauthorized'}); const citizenid=req.body?.citizenid; if(!citizenid) return res.status(400).json({error:'citizenid required'});
-  try{ const [rows]=await db().query(`SELECT e.id,e.product_id,purchase.product_ids, e.status FROM btp_store_entitlements e JOIN btp_store_accounts a ON a.id=e.account_id JOIN btp_store_purchases purchase ON purchase.purchase_id=e.purchase_id WHERE a.citizenid=? AND e.status='active'`,[citizenid]);
-    const entitlements=rows.map(e=>{const p=products.find(x=>x.id===e.product_id);return {id:e.id,product_id:e.product_id,product_name:p?.name||e.product_id};}); res.json({entitlements});
+  if(!apiAuthorized(req)) return res.status(401).json({error:'Unauthorized'});
+  const citizenid=req.body?.citizenid;
+  if(!citizenid) return res.status(400).json({error:'citizenid required'});
+  try{
+    const [rows]=await db().query(`SELECT e.id,e.product_id,purchase.product_ids,e.status FROM btp_store_entitlements e JOIN btp_store_accounts a ON a.id=e.account_id JOIN btp_store_purchases purchase ON purchase.purchase_id=e.purchase_id WHERE a.citizenid=? AND e.status='active'`,[citizenid]);
+    const entitlements=rows.map(e=>{const p=products.find(x=>x.id===e.product_id);return {id:e.id,product_id:e.product_id,product_name:p?.name||e.product_id};});
+    res.json({entitlements});
   }catch(e){console.error('Pending error:',e);res.status(500).json({error:'Pending lookup failed.'});}
 });
 
 app.post('/api/fivem/prepare',async(req,res)=>{
-  if(!apiAuthorized(req)) return res.status(401).json({error:'Unauthorized'}); const {entitlement_id,citizenid}=req.body||{}; if(!entitlement_id||!citizenid) return res.status(400).json({error:'Missing fields'});
-  try{ const [r]=await db().execute(`UPDATE btp_store_entitlements e JOIN btp_store_accounts a ON a.id=e.account_id SET e.status='processing' WHERE e.id=? AND a.citizenid=? AND e.status='active'`,[entitlement_id,citizenid]); if(r.affectedRows!==1) return res.status(409).json({error:'Not available'}); res.json({status:'processing'}); }catch(e){console.error(e);res.status(500).json({error:'Prepare failed'});}
+  if(!apiAuthorized(req)) return res.status(401).json({error:'Unauthorized'});
+  const {entitlement_id,citizenid}=req.body||{};
+  if(!entitlement_id||!citizenid) return res.status(400).json({error:'Missing fields'});
+  try{
+    const [r]=await db().execute(`UPDATE btp_store_entitlements e JOIN btp_store_accounts a ON a.id=e.account_id SET e.status='processing' WHERE e.id=? AND a.citizenid=? AND e.status='active'`,[entitlement_id,citizenid]);
+    if(r.affectedRows!==1) return res.status(409).json({error:'Not available'});
+    res.json({status:'processing'});
+  }catch(e){console.error(e);res.status(500).json({error:'Prepare failed'});}
 });
 app.post('/api/fivem/claim',async(req,res)=>{
-  if(!apiAuthorized(req)) return res.status(401).json({error:'Unauthorized'}); const {entitlement_id,vehicle_id,citizenid}=req.body||{}; try{const [r]=await db().execute(`UPDATE btp_store_entitlements e JOIN btp_store_accounts a ON a.id=e.account_id SET e.status='delivered',e.delivery_ref=?,e.updated_at=CURRENT_TIMESTAMP WHERE e.id=? AND a.citizenid=? AND e.status='processing'`,[String(vehicle_id||''),entitlement_id,citizenid]); if(r.affectedRows!==1)return res.status(409).json({error:'Claim failed'});res.json({ok:true});}catch(e){console.error(e);res.status(500).json({error:'Claim failed'});}});
-app.post('/api/fivem/release',async(req,res)=>{if(!apiAuthorized(req))return res.status(401).json({error:'Unauthorized'});const {entitlement_id,citizenid}=req.body||{};try{await db().execute(`UPDATE btp_store_entitlements e JOIN btp_store_accounts a ON a.id=e.account_id SET e.status='active' WHERE e.id=? AND a.citizenid=? AND e.status='processing'`,[entitlement_id,citizenid]);res.json({ok:true});}catch(e){res.status(500).json({error:'Release failed'});}});
+  if(!apiAuthorized(req)) return res.status(401).json({error:'Unauthorized'});
+  const {entitlement_id,vehicle_id,citizenid}=req.body||{};
+  try{
+    const [r]=await db().execute(`UPDATE btp_store_entitlements e JOIN btp_store_accounts a ON a.id=e.account_id SET e.status='delivered',e.updated_at=CURRENT_TIMESTAMP WHERE e.id=? AND a.citizenid=? AND e.status='processing'`,[entitlement_id,citizenid]);
+    if(r.affectedRows!==1)return res.status(409).json({error:'Claim failed'});
+    res.json({ok:true});
+  }catch(e){console.error(e);res.status(500).json({error:'Claim failed'});}
+});
+app.post('/api/fivem/release',async(req,res)=>{
+  if(!apiAuthorized(req))return res.status(401).json({error:'Unauthorized'});
+  const {entitlement_id,citizenid}=req.body||{};
+  try{
+    await db().execute(`UPDATE btp_store_entitlements e JOIN btp_store_accounts a ON a.id=e.account_id SET e.status='active' WHERE e.id=? AND a.citizenid=? AND e.status='processing'`,[entitlement_id,citizenid]);
+    res.json({ok:true});
+  }catch(e){res.status(500).json({error:'Release failed'});}
+});
 
-app.get('/api/order/:sessionId',async(req,res)=>{try{if(!stripe)return res.status(500).json({error:'Stripe is not configured.'});const s=await stripe.checkout.sessions.retrieve(req.params.sessionId);if(!s||s.payment_status!=='paid'&&s.status!=='complete')return res.status(409).json({error:'Payment has not been confirmed.'});const ids=String(s.metadata?.product_ids||'').split(',').filter(Boolean);res.json({purchaseId:s.metadata?.purchase_id||'BTP-PENDING',products:ids.map(id=>products.find(p=>p.id===id)).filter(Boolean),total:Number(s.amount_total||0)/100,paymentStatus:s.payment_status});}catch(e){res.status(404).json({error:'Order could not be found.'});}});
+app.get('/api/order/:sessionId',async(req,res)=>{
+  try{
+    if(!stripe)return res.status(500).json({error:'Stripe is not configured.'});
+    const s=await stripe.checkout.sessions.retrieve(req.params.sessionId);
+    if(!s||s.payment_status!=='paid'&&s.status!=='complete')return res.status(409).json({error:'Payment has not been confirmed.'});
+    const ids=String(s.metadata?.product_ids||'').split(',').filter(Boolean);
+    res.json({purchaseId:s.metadata?.purchase_id||'BTP-PENDING',products:ids.map(id=>products.find(p=>p.id===id)).filter(Boolean),total:Number(s.amount_total||0)/100,paymentStatus:s.payment_status});
+  }catch(e){res.status(404).json({error:'Order could not be found.'});}
+});
 
 app.listen(PORT,()=>console.log(`By The People store running on port ${PORT}`));
