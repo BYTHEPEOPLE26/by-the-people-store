@@ -166,7 +166,7 @@ document.querySelector('#checkout')?.addEventListener('click', async () => {
     console.error(error);
     alert(error.message || 'Checkout could not be created.');
     button.disabled = false;
-    button.textContent = 'CHECKOUT WITH STRIPE';
+    button.textContent = 'CHECKOUT WITH TEBEX';
   }
 });
 
