@@ -1,5 +1,4 @@
 import express from 'express';
-import Stripe from 'stripe';
 import path from 'node:path';
 import { fileURLToPath } from 'url';
 import crypto from 'node:crypto';
@@ -9,13 +8,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3000;
 const BASE_URL = (process.env.BASE_URL || `http://localhost:${PORT}`).replace(/\/+$/, '');
-const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '';
-const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY) : null;
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
 const EMAIL_FROM = process.env.EMAIL_FROM || '';
-const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
 const BTP_API_SECRET = process.env.BTP_API_SECRET || '';
 const DATABASE_URL = process.env.DATABASE_URL || '';
+const TEBEX_PROJECT_ID = process.env.TEBEX_PROJECT_ID || '';
+const TEBEX_PRIVATE_KEY = process.env.TEBEX_PRIVATE_KEY || '';
+const TEBEX_CHECKOUT_ENABLED = String(process.env.TEBEX_CHECKOUT_ENABLED || 'false').toLowerCase() === 'true';
 const COOKIE_SECRET = BTP_API_SECRET || crypto.randomBytes(32).toString('hex');
 
 const products = [
@@ -82,30 +81,6 @@ async function sendConfirmationEmail({to,name,purchaseId,products,total,billing}
   if(!response.ok) console.error('Resend error:',await response.text());
 }
 
-app.post('/api/stripe-webhook', express.raw({type:'application/json'}), async (req,res)=>{
-  if(!stripe || !STRIPE_WEBHOOK_SECRET) return res.status(500).send('Stripe webhook is not configured.');
-  let event; try{event=stripe.webhooks.constructEvent(req.body,req.headers['stripe-signature'],STRIPE_WEBHOOK_SECRET);}catch(e){return res.status(400).send(`Webhook Error: ${e.message}`);}
-  try{
-    if(event.type==='checkout.session.completed'){
-      const s=event.data.object; const ids=String(s.metadata?.product_ids||'').split(',').filter(Boolean); const selected=ids.map(id=>products.find(p=>p.id===id)).filter(Boolean);
-      const purchaseId=s.metadata?.purchase_id||makePurchaseId(); const accountId=Number(s.metadata?.account_id||0)||null; const total=Number(s.amount_total||0)/100; const billing=s.metadata?.billing==='monthly'?'monthly':'once';
-      const email=s.customer_details?.email||s.customer_email||''; const name=s.customer_details?.name||'there';
-      await db().execute(`INSERT INTO btp_store_purchases (purchase_id,account_id,stripe_session_id,stripe_customer_id,stripe_subscription_id,product_ids,billing,total,payment_status) VALUES (?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE payment_status=VALUES(payment_status),stripe_customer_id=VALUES(stripe_customer_id),stripe_subscription_id=VALUES(stripe_subscription_id),account_id=COALESCE(account_id,VALUES(account_id))`,[purchaseId,accountId,s.id,s.customer||null,s.subscription||null,ids.join(','),billing,total,s.payment_status||'paid']);
-      if(accountId){
-        for(const p of selected) await db().execute(`INSERT INTO btp_store_entitlements (account_id,purchase_id,product_id,product_type,status,expires_at) VALUES (?,?,?,?,?,?)`,[accountId,purchaseId,p.id,p.type,'active',null]);
-      }
-      await sendConfirmationEmail({to:email,name,purchaseId,products:selected,total,billing});
-      console.log(`Purchase recorded: ${purchaseId} (${s.id})`);
-    }
-    if(event.type==='customer.subscription.updated' || event.type==='customer.subscription.deleted'){
-      const s=event.data.object; const status=event.type==='customer.subscription.deleted'?'cancelled':(s.status||'active'); const expiry=s.current_period_end?new Date(s.current_period_end*1000):null;
-      await db().execute(`UPDATE btp_store_purchases SET payment_status=?,updated_at=CURRENT_TIMESTAMP WHERE stripe_subscription_id=?`,[status,s.id]);
-      await db().execute(`UPDATE btp_store_entitlements e JOIN btp_store_purchases p ON p.purchase_id=e.purchase_id SET e.status=?,e.expires_at=? WHERE p.stripe_subscription_id=?`,[status,expiry,s.id]);
-    }
-    return res.json({received:true});
-  }catch(e){console.error('Webhook processing error:',e);return res.status(500).json({error:'Webhook processing failed.'});}
-});
-
 app.use((req,res,next)=>{
   res.cookie=(name,value,options={})=>{
     const parts=[`${name}=${encodeURIComponent(value)}`];
@@ -161,33 +136,88 @@ app.post('/api/fivem/consume-link',async(req,res)=>{
   }catch(e){console.error('Consume link error:',e);res.status(500).json({error:'Could not link account.'});}
 });
 
-app.post('/api/create-checkout-session',async(req,res)=>{
-  try{
-    if(!stripe) return res.status(500).json({error:'Stripe is not configured.'});
-    const account=await getAccountFromCookie(req);
-    if(!account) return res.status(401).json({error:'Please link your FiveM account first.'});
-    const ids=Array.isArray(req.body?.productIds)?req.body.productIds:[];
-    const selected=ids.map(id=>products.find(p=>p.id===id)).filter(Boolean);
-    if(!selected.length) return res.status(400).json({error:'No valid products selected.'});
-    if(selected.some(p=>p.stock<=0)) return res.status(409).json({error:'One or more selected products are sold out.'});
-    const billingTypes=new Set(selected.map(p=>p.billing));
-    if(billingTypes.size>1) return res.status(400).json({error:'Please checkout vehicles separately from monthly subscriptions.'});
-    const monthly=selected[0].billing==='monthly';
-    if(monthly){
-      const [rows]=await db().query(`SELECT e.product_id FROM btp_store_entitlements e WHERE e.account_id=? AND e.status='active' AND e.product_id IN (${selected.map(()=>'?').join(',')})`,[account.id,...selected.map(p=>p.id)]);
-      if(rows.length) return res.status(409).json({error:'One or more selected subscriptions are already active on this account.'});
+app.post('/api/create-checkout-session', async (req, res) => {
+  try {
+    if (!TEBEX_CHECKOUT_ENABLED) {
+      return res.status(503).json({
+        error: 'Tebex custom checkout is not enabled. Set TEBEX_CHECKOUT_ENABLED=true on the server.'
+      });
     }
-    const purchaseId=makePurchaseId();
-    const session=await stripe.checkout.sessions.create({
-      mode:monthly?'subscription':'payment',
-      managed_payments:{enabled:false},
-      line_items:selected.map(p=>({price_data:{currency:'gbp',product_data:{name:p.name,description:p.description},unit_amount:Math.round(p.price*100),...(monthly?{recurring:{interval:'month'}}:{})},quantity:1})),
-      success_url:`${BASE_URL}/success.html?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url:`${BASE_URL}/#store`,
-      metadata:{product_ids:selected.map(p=>p.id).join(','),billing:monthly?'monthly':'once',purchase_id,account_id:String(account.id)}
+    if (!TEBEX_PROJECT_ID || !TEBEX_PRIVATE_KEY) {
+      return res.status(500).json({ error: 'Tebex Project ID or Private Key is not configured.' });
+    }
+
+    const ids = Array.isArray(req.body?.productIds) ? req.body.productIds : [];
+    const selected = ids.map(id => products.find(p => String(p.id) === String(id))).filter(Boolean);
+    if (!selected.length) return res.status(400).json({ error: 'No valid products selected.' });
+    if (selected.some(p => Number(p.stock) <= 0)) return res.status(409).json({ error: 'One or more selected products are sold out.' });
+
+    const billingTypes = new Set(selected.map(p => p.billing));
+    if (billingTypes.size > 1) {
+      return res.status(400).json({ error: 'Please checkout one payment type at a time. Vehicles are one-time purchases, while houses/businesses/MLOs are monthly subscriptions.' });
+    }
+
+    // Tebex Checkout API accepts custom products. This keeps the product catalogue on
+    // the By The People site instead of requiring a duplicate package for every item.
+    // Tebex approval is required for this API.
+    const monthly = selected[0].billing === 'monthly';
+    const payload = {
+      basket: {
+        return_url: `${BASE_URL}/#store`,
+        complete_url: `${BASE_URL}/success.html`,
+        complete_auto_redirect: true,
+        custom: {
+          source: 'bythepeople-custom-store',
+          product_ids: selected.map(p => p.id),
+          billing: monthly ? 'monthly' : 'once'
+        }
+      },
+      items: selected.map(p => ({
+        package: {
+          name: p.name,
+          price: Number(p.price),
+          type: monthly ? 'subscription' : 'single',
+          qty: 1,
+          ...(monthly ? { expiry_period: 'month', expiry_length: 1 } : {}),
+          custom: {
+            store_product_id: p.id,
+            product_type: p.type,
+            delivery_name: p.name
+          }
+        }
+      }))
+    };
+
+    const auth = Buffer.from(`${TEBEX_PROJECT_ID}:${TEBEX_PRIVATE_KEY}`).toString('base64');
+    const response = await fetch('https://checkout.tebex.io/api/checkout', {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${auth}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json'
+      },
+      body: JSON.stringify(payload)
     });
-    res.json({url:session.url});
-  }catch(e){console.error('Checkout error:',e);res.status(500).json({error:e?.message||'Checkout failed.'});}
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      console.error('Tebex checkout error:', response.status, data);
+      return res.status(response.status).json({
+        error: data?.detail || data?.message || 'Tebex could not create the checkout.'
+      });
+    }
+
+    const checkoutUrl = data?.links?.checkout || (data?.ident ? `https://pay.tebex.io/${data.ident}` : null);
+    if (!checkoutUrl) {
+      console.error('Tebex response did not contain a checkout URL:', data);
+      return res.status(502).json({ error: 'Tebex returned no checkout URL.' });
+    }
+
+    res.json({ url: checkoutUrl, ident: data.ident || null });
+  } catch (e) {
+    console.error('Tebex checkout exception:', e);
+    res.status(500).json({ error: e?.message || 'Checkout failed.' });
+  }
 });
 
 app.post('/api/fivem/pending',async(req,res)=>{
@@ -229,14 +259,27 @@ app.post('/api/fivem/release',async(req,res)=>{
   }catch(e){res.status(500).json({error:'Release failed'});}
 });
 
-app.get('/api/order/:sessionId',async(req,res)=>{
-  try{
-    if(!stripe)return res.status(500).json({error:'Stripe is not configured.'});
-    const s=await stripe.checkout.sessions.retrieve(req.params.sessionId);
-    if(!s||s.payment_status!=='paid'&&s.status!=='complete')return res.status(409).json({error:'Payment has not been confirmed.'});
-    const ids=String(s.metadata?.product_ids||'').split(',').filter(Boolean);
-    res.json({purchaseId:s.metadata?.purchase_id||'BTP-PENDING',products:ids.map(id=>products.find(p=>p.id===id)).filter(Boolean),total:Number(s.amount_total||0)/100,paymentStatus:s.payment_status});
-  }catch(e){res.status(404).json({error:'Order could not be found.'});}
+app.get('/api/order/:ident', async (req, res) => {
+  try {
+    if (!TEBEX_CHECKOUT_ENABLED || !TEBEX_PROJECT_ID || !TEBEX_PRIVATE_KEY) {
+      return res.status(503).json({ error: 'Tebex checkout is not configured.' });
+    }
+    const auth = Buffer.from(`${TEBEX_PROJECT_ID}:${TEBEX_PRIVATE_KEY}`).toString('base64');
+    const response = await fetch(`https://checkout.tebex.io/api/baskets/${encodeURIComponent(req.params.ident)}`, {
+      headers: { Authorization: `Basic ${auth}`, Accept: 'application/json' }
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) return res.status(response.status).json({ error: data?.detail || 'Basket could not be found.' });
+    res.json({
+      ident: data.ident,
+      complete: !!data.complete,
+      total: Number(data.priceDetails?.total ?? data.price ?? 0),
+      payment: data.payment || null,
+      rows: data.rows || []
+    });
+  } catch (e) {
+    res.status(500).json({ error: 'Order could not be checked.' });
+  }
 });
 
 app.listen(PORT,()=>console.log(`By The People store running on port ${PORT}`));
