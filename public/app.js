@@ -156,7 +156,7 @@ document.querySelector('#checkout')?.addEventListener('click', async () => {
   button.disabled = true;
   button.textContent = 'LOADING...';
   try {
-    const response = await fetch('/api/create-checkout-session', {
+    const response = await fetch('/api/checkout-disabled', {
       method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({productIds:cart})
     });
     const data = await response.json();
