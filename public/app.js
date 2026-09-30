@@ -14,6 +14,14 @@ const modalThumbs = document.querySelector('#modalThumbs');
 const modalAdd = document.querySelector('#modalAdd');
 const modalClose = document.querySelector('#modalClose');
 const exploreBtn = document.querySelector('#exploreStore');
+const purchaseModal = document.querySelector('#purchaseModal');
+const purchaseClose = document.querySelector('#purchaseClose');
+const discordBtn = document.querySelector('#discordBtn');
+const discordStatus = document.querySelector('#discordStatus');
+const discordLinkLarge = document.querySelector('#discordLinkLarge');
+const characterName = document.querySelector('#characterName');
+const continueCheckout = document.querySelector('#continueCheckout');
+let discordAccount = null;
 
 let products = [];
 let cart = JSON.parse(localStorage.getItem('btp-cart') || '[]');
@@ -150,25 +158,42 @@ modalClose?.addEventListener('click', closeProduct);
 modal?.addEventListener('click', e => { if(e.target === modal) closeProduct(); });
 modalAdd?.addEventListener('click', () => { if(currentProduct){ add(currentProduct.id); closeProduct(); } });
 
-document.querySelector('#checkout')?.addEventListener('click', async () => {
+async function loadDiscordAccount(){
+  try{
+    const response = await fetch('/api/discord/me',{cache:'no-store'});
+    discordAccount = response.ok ? await response.json() : {linked:false};
+  }catch(e){ discordAccount = {linked:false}; }
+  const linked = !!discordAccount?.linked;
+  if(discordStatus) discordStatus.innerHTML = linked ? `✓ DISCORD LINKED — ${safe(discordAccount.username || 'Account connected')}` : 'DISCORD NOT LINKED';
+  if(discordBtn){ discordBtn.textContent = linked ? 'DISCORD LINKED' : 'LINK DISCORD'; discordBtn.classList.toggle('linked', linked); }
+  if(discordLinkLarge) discordLinkLarge.textContent = linked ? 'DISCORD LINKED' : 'LINK DISCORD';
+  if(linked && characterName) characterName.focus();
+  return linked;
+}
+function openPurchaseModal(){
   if(!cart.length) return alert('Your cart is empty.');
-  const button = document.querySelector('#checkout');
-  button.disabled = true;
-  button.textContent = 'LOADING...';
-  try {
-    const response = await fetch('/api/checkout-disabled', {
-      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({productIds:cart})
-    });
-    const data = await response.json();
-    if(data.url) window.location.href = data.url;
-    else throw new Error(data.error || 'Checkout could not be created.');
-  } catch(error){
-    console.error(error);
-    alert(error.message || 'Checkout could not be created.');
-    button.disabled = false;
-    button.textContent = 'CHECKOUT WITH TEBEX';
-  }
+  purchaseModal?.classList.add('show'); document.body.classList.add('modalOpen');
+  loadDiscordAccount();
+}
+function closePurchaseModal(){ purchaseModal?.classList.remove('show'); document.body.classList.remove('modalOpen'); }
+discordBtn?.addEventListener('click',()=>{ window.location.href='/api/discord/login'; });
+discordLinkLarge?.addEventListener('click',()=>{ if(!discordAccount?.linked) window.location.href='/api/discord/login'; });
+purchaseClose?.addEventListener('click',closePurchaseModal);
+purchaseModal?.addEventListener('click',e=>{ if(e.target===purchaseModal) closePurchaseModal(); });
+document.querySelector('#checkout')?.addEventListener('click', openPurchaseModal);
+continueCheckout?.addEventListener('click', async()=>{
+  if(!discordAccount?.linked){ alert('Please link your Discord account first.'); return; }
+  const name=(characterName?.value||'').trim();
+  if(name.length<2){ alert('Please enter your character name.'); characterName?.focus(); return; }
+  continueCheckout.disabled=true; continueCheckout.textContent='LOADING...';
+  try{
+    const response=await fetch('/api/create-checkout-session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({productIds:cart,characterName:name})});
+    const data=await response.json();
+    if(data.url) window.location.href=data.url; else throw new Error(data.error||'Checkout could not be created.');
+  }catch(error){ alert(error.message||'Checkout could not be created.'); continueCheckout.disabled=false; continueCheckout.textContent='CONTINUE TO STRIPE'; }
 });
+if(new URLSearchParams(location.search).get('discord')==='1') loadDiscordAccount();
+loadDiscordAccount();
 
 if(exploreBtn) exploreBtn.addEventListener('click', e => { e.preventDefault(); document.querySelector('#store')?.scrollIntoView({behavior:'smooth'}); });
 
