@@ -23,7 +23,7 @@ const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY) : null;
 const COOKIE_SECRET = BTP_API_SECRET || crypto.randomBytes(32).toString('hex');
 
 const products = [
-  {id:'veh-01',type:'Vehicles',name:'Gresley Hellfire PD',price:0.80,billing:'once',stock:999,images:['GRESLEYHELLFIREPD.webp'],description:'Gresley Hellfire PD vehicle for your By The People RolePlay fleet.'},
+  {id:'veh-01',type:'Vehicles',name:'Gresley Hellfire PD',price:25,billing:'once',stock:999,images:['GRESLEYHELLFIREPD.webp'],description:'Gresley Hellfire PD vehicle for your By The People RolePlay fleet.'},
   {id:'veh-02',type:'Vehicles',name:'Gresley Hellfire',price:20,billing:'once',stock:999,images:['GRESLEYHELLFIRE.webp'],description:'Gresley Hellfire vehicle for your roleplay fleet.'},
   {id:'veh-03',type:'Vehicles',name:'Schlagen STR',price:20,billing:'once',stock:999,images:['SCHLAGENSTR.webp'],description:'Schlagen STR performance vehicle.'},
   {id:'veh-04',type:'Vehicles',name:'MVolt',price:15,billing:'once',stock:999,images:['MVOLT.webp'],description:'MVolt vehicle package.'},
