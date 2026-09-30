@@ -320,6 +320,7 @@ app.post('/api/create-checkout-session', async (req, res) => {
     const purchaseId = makePurchaseId();
     const session = await stripe.checkout.sessions.create({
       mode: monthly ? 'subscription' : 'payment',
+      managed_payments: { enabled: false },
       line_items: selected.map(p => ({ price_data: { currency:'gbp', product_data:{name:p.name,description:p.description}, unit_amount:Math.round(Number(p.price)*100), ...(monthly?{recurring:{interval:'month'}}:{}) }, quantity:1 })),
       ...(account.email ? {customer_email:account.email} : {}),
       success_url:`${BASE_URL}/success.html?session_id={CHECKOUT_SESSION_ID}`,
