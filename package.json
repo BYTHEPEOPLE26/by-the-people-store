@@ -1,0 +1,13 @@
+{
+  "name": "by-the-people-store",
+  "version": "2.1.0",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "mysql2": "^3.15.1",
+    "stripe": "^18.5.0"
+  }
+}
