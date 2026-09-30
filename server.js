@@ -324,8 +324,8 @@ app.post('/api/create-checkout-session', async (req, res) => {
       ...(account.email ? {customer_email:account.email} : {}),
       success_url:`${BASE_URL}/success.html?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url:`${BASE_URL}/#store`,
-      metadata:{account_id:String(account.id),product_ids:selected.map(p=>p.id).join(','),billing:monthly?'monthly':'once',purchase_id,character_name:characterName,discord_id:account.discord_id,discord_username:account.discord_username||''},
-      ...(monthly?{subscription_data:{metadata:{account_id:String(account.id),product_ids:selected.map(p=>p.id).join(','),purchase_id,character_name:characterName,discord_id:account.discord_id,discord_username:account.discord_username||''}}}: {})
+      metadata:{account_id:String(account.id),product_ids:selected.map(p=>p.id).join(','),billing:monthly?'monthly':'once',purchase_id:purchaseId,,character_name:characterName,discord_id:account.discord_id,discord_username:account.discord_username||''},
+      ...(monthly?{subscription_data:{metadata:{account_id:String(account.id),product_ids:selected.map(p=>p.id).join(','),purchase_id:purchaseId,,character_name:characterName,discord_id:account.discord_id,discord_username:account.discord_username||''}}}: {})
     });
     res.json({url:session.url,id:session.id});
   } catch(e){ console.error('Stripe checkout exception:',e); res.status(500).json({error:e?.message||'Checkout failed.'}); }
